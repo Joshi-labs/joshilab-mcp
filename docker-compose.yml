@@ -1,0 +1,10 @@
+version: "3.8"
+
+services:
+  host-mcp:
+    image: ghcr.io/<your-github-username>/<your-repo-name>:latest
+    container_name: host-mcp
+    restart: unless-stopped
+    privileged: true
+    pid: "host"
+    network_mode: "host"
