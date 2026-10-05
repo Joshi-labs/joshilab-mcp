@@ -1,12 +1,10 @@
 import asyncio
 import os
-import subprocess
 import unittest
-from unittest.mock import patch
 from starlette.testclient import TestClient
 
 import server
-from server import app, can_use_nsenter, exec_command, mcp
+from server import app, exec_command, mcp
 
 
 class TestServerRoutes(unittest.TestCase):
@@ -60,18 +58,6 @@ class TestServerRoutes(unittest.TestCase):
 
 
 class TestExecCommandTool(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls._orig_nsenter_env = os.environ.get("USE_NSENTER")
-        os.environ["USE_NSENTER"] = "0"
-
-    @classmethod
-    def tearDownClass(cls):
-        if cls._orig_nsenter_env is not None:
-            os.environ["USE_NSENTER"] = cls._orig_nsenter_env
-        else:
-            os.environ.pop("USE_NSENTER", None)
-
     def test_empty_command(self):
         self.assertEqual(exec_command(""), "Error: Command cannot be empty.")
         self.assertEqual(exec_command("   "), "Error: Command cannot be empty.")
@@ -104,25 +90,6 @@ class TestExecCommandTool(unittest.TestCase):
             self.assertIn("exec_command", tool_names)
 
         asyncio.run(check_tools())
-
-    @patch("server.can_use_nsenter", return_value=True)
-    @patch("subprocess.run")
-    def test_exec_command_with_nsenter_mock(self, mock_run, mock_can_use):
-        mock_run.return_value = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="nsenter host output", stderr=""
-        )
-        result = exec_command("uname -a")
-        self.assertEqual(result, "nsenter host output")
-        mock_run.assert_called_once()
-        cmd = mock_run.call_args[0][0]
-        self.assertEqual(cmd[0], "nsenter")
-        self.assertIn("-t", cmd)
-        self.assertIn("1", cmd)
-        self.assertIn("uname -a", cmd)
-
-    def test_can_use_nsenter_when_disabled(self):
-        with patch.dict(os.environ, {"USE_NSENTER": "0"}):
-            self.assertFalse(can_use_nsenter())
 
 
 if __name__ == "__main__":

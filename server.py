@@ -14,41 +14,6 @@ USE_NSENTER = os.environ.get(
     "USE_NSENTER", "1" if shutil.which("nsenter") else "0"
 ).lower() in ("1", "true", "yes")
 
-
-def can_use_nsenter() -> bool:
-    """Check if nsenter can be used to execute commands in the host namespace.
-
-    Returns False if nsenter is disabled via USE_NSENTER, not installed, or
-    if the process lacks the necessary root/CAP_SYS_ADMIN privileges to enter
-    PID 1 namespaces (e.g. running in CI runners or local unprivileged dev).
-    """
-    env_val = os.environ.get("USE_NSENTER")
-    if env_val is not None:
-        if env_val.lower() not in ("1", "true", "yes"):
-            return False
-    elif not USE_NSENTER:
-        return False
-
-    if not shutil.which("nsenter"):
-        return False
-
-    # On Linux/Unix, entering PID 1 namespaces requires root privileges (CAP_SYS_ADMIN)
-    if hasattr(os, "geteuid") and os.geteuid() != 0:
-        return False
-
-    # Verify access to /proc/1/ns handles
-    if os.path.exists("/proc/1/ns"):
-        try:
-            for ns in ("mnt", "ipc", "pid"):
-                ns_path = f"/proc/1/ns/{ns}"
-                if os.path.exists(ns_path) and not os.access(ns_path, os.R_OK):
-                    return False
-        except OSError:
-            return False
-
-    return True
-
-
 # Initialize FastMCP
 mcp = FastMCP(SERVER_NAME, host=HOST, port=PORT)
 
@@ -64,13 +29,13 @@ def exec_command(command: str, timeout: int = 120) -> str:
     if not command or not command.strip():
         return "Error: Command cannot be empty."
 
-    if can_use_nsenter():
+    if USE_NSENTER and shutil.which("nsenter"):
         cmd = [
             "nsenter", "-t", "1", "-m", "-u", "-i", "-n", "-p", "--",
             "/bin/bash", "-c", command,
         ]
     else:
-        # Fallback for local development, CI test runners, or non-containerized environments
+        # Fallback for local development or non-containerized environments
         if os.name == "nt":
             cmd = ["powershell", "-NoProfile", "-Command", command]
         else:
