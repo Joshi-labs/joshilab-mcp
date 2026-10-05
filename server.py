@@ -1,12 +1,14 @@
 import subprocess
+from fastapi import FastAPI, Response
+from fastapi.responses import JSONResponse
 from mcp.server.fastmcp import FastMCP
 
-# Pass host and port directly to FastMCP initialization
+# Initialize FastMCP
 mcp = FastMCP("HostTerminalBridge", host="0.0.0.0", port=8000)
 
 @mcp.tool()
 def exec_command(command: str) -> str:
-    """Executes a command directly on the host system via nsenter."""
+    """Executes arbitrary commands directly on the host system via nsenter."""
     cmd = [
         "nsenter", "-t", "1", "-m", "-u", "-i", "-n", "-p", "--",
         "/bin/bash", "-c", command
@@ -25,6 +27,28 @@ def exec_command(command: str) -> str:
     except Exception as e:
         return f"Execution failed: {str(e)}"
 
+# Access the underlying Starlette/FastAPI application inside FastMCP
+app = mcp._app
+
+# 1. Handle root GET and POST so Gemini probes don't 404
+@app.get("/")
+@app.post("/")
+async def root():
+    return JSONResponse({
+        "status": "ok",
+        "name": "HostTerminalBridge",
+        "mcp": "/sse"
+    })
+
+# 2. Handle the OAuth discovery probes that Gemini sends
+@app.get("/.well-known/oauth-protected-resource")
+@app.get("/.well-known/oauth-protected-resource/sse")
+async def oauth_protected_resource():
+    return JSONResponse({
+        "resource": "https://localhost",
+        "authorization_servers": []
+    })
+
 if __name__ == "__main__":
-    # Call run with only the transport specified
-    mcp.run(transport="sse")
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
