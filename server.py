@@ -1,14 +1,12 @@
 import subprocess
 from mcp.server.fastmcp import FastMCP
 
-mcp = FastMCP("HostTerminalBridge")
+# Pass host and port directly to FastMCP initialization
+mcp = FastMCP("HostTerminalBridge", host="0.0.0.0", port=8000)
 
 @mcp.tool()
 def exec_command(command: str) -> str:
-    """
-    Executes an arbitrary shell command directly on the host root system.
-    Runs inside the host's PID 1 namespaces using nsenter without restrictions.
-    """
+    """Executes a command directly on the host system via nsenter."""
     cmd = [
         "nsenter", "-t", "1", "-m", "-u", "-i", "-n", "-p", "--",
         "/bin/bash", "-c", command
@@ -18,29 +16,15 @@ def exec_command(command: str) -> str:
             cmd,
             capture_output=True,
             text=True,
-            timeout=120  # Prevent infinite hangs on long-running processes
+            timeout=120
         )
-        
-        stdout = result.stdout
-        stderr = result.stderr
-        
-        output_parts = []
-        if stdout:
-            output_parts.append(stdout)
-        if stderr:
-            output_parts.append(f"[STDERR]\n{stderr}")
-            
-        combined_output = "\n".join(output_parts).strip()
-        
-        if not combined_output:
-            return f"(Command executed with exit code {result.returncode}, no output)"
-            
-        return combined_output
-
+        output = (result.stdout + ("\n[STDERR]\n" + result.stderr if result.stderr else "")).strip()
+        return output if output else f"(Exit code {result.returncode}, no output)"
     except subprocess.TimeoutExpired:
         return "Error: Command timed out after 120 seconds."
     except Exception as e:
         return f"Execution failed: {str(e)}"
 
 if __name__ == "__main__":
-    mcp.run(transport="sse", host="0.0.0.0", port=8000)
+    # Call run with only the transport specified
+    mcp.run(transport="sse")
