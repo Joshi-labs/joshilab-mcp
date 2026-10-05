@@ -1,9 +1,9 @@
 version: "3.8"
 
 services:
-  host-mcp:
-    image: ghcr.io/<your-github-username>/<your-repo-name>:latest
-    container_name: host-mcp
+  joshilab-mcp:
+    image: ghcr.io/joshi-labs/joshilab-mcp:latest
+    container_name: joshilab-mcp
     restart: unless-stopped
     privileged: true
     pid: "host"
