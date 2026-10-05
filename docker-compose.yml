@@ -1,10 +1,13 @@
-version: "3.8"
-
 services:
   joshilab-mcp:
+    build: .
     image: ghcr.io/joshi-labs/joshilab-mcp:latest
     container_name: joshilab-mcp
     restart: unless-stopped
     privileged: true
     pid: "host"
     network_mode: "host"
+    environment:
+      - PORT=8000
+      - HOST=0.0.0.0
+      - SERVER_NAME=HostTerminalBridge
