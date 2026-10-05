@@ -11,3 +11,6 @@ services:
       - PORT=8000
       - HOST=0.0.0.0
       - SERVER_NAME=HostTerminalBridge
+      - PUBLIC_URL=https://host.vpjoshi.in
+      - OAUTH_CLIENT_ID=joshilab-client
+      - OAUTH_CLIENT_SECRET=joshilab-secret-2026

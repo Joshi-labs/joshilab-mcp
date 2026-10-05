@@ -1,15 +1,24 @@
 import asyncio
 import os
+import subprocess
 import unittest
+import urllib.parse
+from unittest.mock import patch
 from starlette.testclient import TestClient
 
 import server
-from server import app, exec_command, mcp
+from server import app, can_use_nsenter, exec_command, mcp, OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET
 
 
 class TestServerRoutes(unittest.TestCase):
-    def setUp(self):
-        self.client = TestClient(app)
+    @classmethod
+    def setUpClass(cls):
+        cls.client_context = TestClient(app)
+        cls.client = cls.client_context.__enter__()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.client_context.__exit__(None, None, None)
 
     def test_root_get(self):
         response = self.client.get("/")
@@ -17,7 +26,7 @@ class TestServerRoutes(unittest.TestCase):
         data = response.json()
         self.assertEqual(data.get("status"), "ok")
         self.assertEqual(data.get("name"), server.SERVER_NAME)
-        self.assertEqual(data.get("mcp"), "/sse")
+        self.assertIn("/mcp", data.get("mcp"))
 
     def test_root_post(self):
         response = self.client.post("/")
@@ -35,6 +44,7 @@ class TestServerRoutes(unittest.TestCase):
     def test_oauth_protected_resource_endpoints(self):
         for path in [
             "/.well-known/oauth-protected-resource",
+            "/.well-known/oauth-protected-resource/mcp",
             "/.well-known/oauth-protected-resource/sse",
         ]:
             with self.subTest(path=path):
@@ -43,6 +53,70 @@ class TestServerRoutes(unittest.TestCase):
                 data = response.json()
                 self.assertIn("resource", data)
                 self.assertIn("authorization_servers", data)
+
+    def test_oauth_authorization_server_metadata(self):
+        for path in [
+            "/.well-known/oauth-authorization-server",
+            "/.well-known/openid-configuration",
+        ]:
+            with self.subTest(path=path):
+                response = self.client.get(path)
+                self.assertEqual(response.status_code, 200)
+                data = response.json()
+                self.assertIn("authorization_endpoint", data)
+                self.assertIn("token_endpoint", data)
+
+    def test_oauth_authorize_and_token_flow(self):
+        # 1. Authorize redirect
+        redirect_uri = "https://vertexaisearch.cloud.google.com/oauth-redirect"
+        auth_url = f"/oauth/authorize?response_type=code&client_id={OAUTH_CLIENT_ID}&redirect_uri={redirect_uri}&state=gemini_state"
+        res = self.client.get(auth_url, follow_redirects=False)
+        self.assertEqual(res.status_code, 302)
+        location = res.headers.get("location")
+        self.assertTrue(location.startswith(redirect_uri))
+        parsed = urllib.parse.parse_qs(urllib.parse.urlparse(location).query)
+        self.assertIn("code", parsed)
+        self.assertEqual(parsed.get("state"), ["gemini_state"])
+        code = parsed["code"][0]
+
+        # 2. Token exchange with valid credentials
+        token_res = self.client.post("/oauth/token", data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "client_id": OAUTH_CLIENT_ID,
+            "client_secret": OAUTH_CLIENT_SECRET,
+            "redirect_uri": redirect_uri,
+        })
+        self.assertEqual(token_res.status_code, 200)
+        token_data = token_res.json()
+        self.assertIn("access_token", token_data)
+        self.assertEqual(token_data.get("token_type"), "Bearer")
+
+        # 3. Token exchange with invalid credentials
+        bad_res = self.client.post("/oauth/token", data={
+            "client_id": "wrong-client",
+            "client_secret": "wrong-secret",
+        })
+        self.assertEqual(bad_res.status_code, 401)
+
+    def test_streamable_mcp_initialization(self):
+        for path in ["/mcp", "/sse"]:
+            with self.subTest(path=path):
+                res = self.client.post(
+                    path,
+                    headers={"Accept": "application/json, text/event-stream"},
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "initialize",
+                        "params": {
+                            "protocolVersion": "2024-11-05",
+                            "capabilities": {},
+                            "clientInfo": {"name": "Gemini", "version": "1.0"},
+                        },
+                    },
+                )
+                self.assertEqual(res.status_code, 200)
 
     def test_cors_headers(self):
         headers = {
@@ -58,6 +132,18 @@ class TestServerRoutes(unittest.TestCase):
 
 
 class TestExecCommandTool(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls._orig_nsenter_env = os.environ.get("USE_NSENTER")
+        os.environ["USE_NSENTER"] = "0"
+
+    @classmethod
+    def tearDownClass(cls):
+        if cls._orig_nsenter_env is not None:
+            os.environ["USE_NSENTER"] = cls._orig_nsenter_env
+        else:
+            os.environ.pop("USE_NSENTER", None)
+
     def test_empty_command(self):
         self.assertEqual(exec_command(""), "Error: Command cannot be empty.")
         self.assertEqual(exec_command("   "), "Error: Command cannot be empty.")
@@ -90,6 +176,25 @@ class TestExecCommandTool(unittest.TestCase):
             self.assertIn("exec_command", tool_names)
 
         asyncio.run(check_tools())
+
+    @patch("server.can_use_nsenter", return_value=True)
+    @patch("subprocess.run")
+    def test_exec_command_with_nsenter_mock(self, mock_run, mock_can_use):
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="nsenter host output", stderr=""
+        )
+        result = exec_command("uname -a")
+        self.assertEqual(result, "nsenter host output")
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args[0][0]
+        self.assertEqual(cmd[0], "nsenter")
+        self.assertIn("-t", cmd)
+        self.assertIn("1", cmd)
+        self.assertIn("uname -a", cmd)
+
+    def test_can_use_nsenter_when_disabled(self):
+        with patch.dict(os.environ, {"USE_NSENTER": "0"}):
+            self.assertFalse(can_use_nsenter())
 
 
 if __name__ == "__main__":

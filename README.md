@@ -1,17 +1,31 @@
 # joshilab-mcp: Host Terminal Bridge
 
-A containerized Model Context Protocol (MCP) server providing host command execution over Server-Sent Events (SSE). Built with Python FastMCP and Starlette, designed for integration with Gemini, Claude Desktop, and other MCP clients.
+A containerized Model Context Protocol (MCP) server providing host command execution via **Streamable HTTP** and **SSE**. Built with Python FastMCP and Starlette, designed for native integration with Google Gemini, Claude Desktop, and modern MCP clients.
 
 ---
 
 ## Features
 
 - **MCP Tools**: Exposes `exec_command` to run arbitrary commands directly on the host system using `nsenter`.
-- **Client Compatibility**: Native handling for Gemini OAuth discovery probes (`/.well-known/oauth-protected-resource`) and root discovery probes (`GET /`, `POST /`).
-- **Health Checks**: `/health` and `/healthz` endpoints with Docker `HEALTHCHECK` support.
-- **CORS Enabled**: Permissive CORS headers for browser-based MCP clients and web interfaces.
-- **Configurable**: Fully configurable via environment variables (`HOST`, `PORT`, `SERVER_NAME`, `USE_NSENTER`).
-- **CI/CD Ready**: Automated tests and GitHub Container Registry (GHCR) publishing workflow.
+- **Streamable HTTP & SSE**: Full support for both modern Streamable HTTP (`/mcp`, `/sse`) and legacy SSE.
+- **Gemini Connected Apps Ready**: Complete OAuth 2.0 implementation (`/oauth/authorize`, `/oauth/token`) and RFC 9728 discovery metadata (`/.well-known/oauth-protected-resource`).
+- **Health Checks**: `/health` and `/healthz` endpoints with Docker `HEALTHCHECK`.
+- **CORS Enabled**: Permissive CORS headers for browser-based MCP clients.
+- **Configurable**: Configurable via environment variables with auto-printed credentials banner in logs.
+
+---
+
+## Gemini Custom Connected App Setup
+
+In the Google Gemini interface (**Connect to an MCP server**):
+
+| Field | Value |
+|---|---|
+| **MCP server URL** | `https://host.vpjoshi.in/mcp` |
+| **Client ID** | `joshilab-client` (or value of `OAUTH_CLIENT_ID`) |
+| **Client secret** | `joshilab-secret-2026` (or value of `OAUTH_CLIENT_SECRET`) |
+
+> The credentials are also printed clearly in your container logs upon startup.
 
 ---
 
@@ -20,13 +34,13 @@ A containerized Model Context Protocol (MCP) server providing host command execu
 ### Using Docker Compose (Recommended)
 
 ```bash
-docker compose up -d
+docker compose up -d --build
 ```
 
-To build locally from source:
+To view the server logs and see your OAuth credentials banner:
 
 ```bash
-docker compose up -d --build
+docker compose logs -f joshilab-mcp
 ```
 
 ### Using Docker Run
@@ -38,25 +52,10 @@ docker run -d \
   --privileged \
   --pid host \
   --network host \
+  -e PUBLIC_URL="https://host.vpjoshi.in" \
+  -e OAUTH_CLIENT_ID="joshilab-client" \
+  -e OAUTH_CLIENT_SECRET="joshilab-secret-2026" \
   ghcr.io/joshi-labs/joshilab-mcp:latest
-```
-
-> **Note**: `--privileged` and `--pid host` are required for `nsenter` to escape container namespaces and execute commands on the host root system.
-
----
-
-## MCP Client Configuration
-
-Connect your MCP client to the server using the SSE transport endpoint:
-
-```json
-{
-  "mcpServers": {
-    "host-terminal": {
-      "url": "http://localhost:8000/sse"
-    }
-  }
-}
 ```
 
 ---
@@ -65,8 +64,11 @@ Connect your MCP client to the server using the SSE transport endpoint:
 
 | Variable | Default | Description |
 |---|---|---|
-| `HOST` | `0.0.0.0` | Bind IP address for the HTTP/SSE server |
-| `PORT` | `8000` | Port for the HTTP/SSE server |
+| `HOST` | `0.0.0.0` | Bind IP address |
+| `PORT` | `8000` | Port for the HTTP/MCP server |
+| `PUBLIC_URL` | `https://host.vpjoshi.in` | Public URL advertised in discovery probes |
+| `OAUTH_CLIENT_ID` | `joshilab-client` | OAuth 2.0 client ID for Gemini |
+| `OAUTH_CLIENT_SECRET` | `joshilab-secret-2026` | OAuth 2.0 client secret for Gemini |
 | `SERVER_NAME` | `HostTerminalBridge` | MCP server identification name |
 | `USE_NSENTER` | `1` (if `nsenter` found) | `1` to execute via `nsenter`, `0` for direct shell execution |
 
@@ -76,12 +78,14 @@ Connect your MCP client to the server using the SSE transport endpoint:
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/sse` | `GET` | MCP Server-Sent Events (SSE) stream |
-| `/messages/` | `POST` | MCP client-to-server JSON-RPC message endpoint |
-| `/` | `GET`, `POST` | Health & MCP endpoint discovery probe |
+| `/mcp` | `GET`, `POST`, `DELETE` | Modern Streamable HTTP MCP endpoint (Gemini default) |
+| `/sse` | `GET`, `POST` | Dual Streamable HTTP / SSE endpoint |
+| `/` | `GET`, `POST` | Health & endpoint discovery probe |
 | `/health`, `/healthz` | `GET` | Health check endpoint |
-| `/.well-known/oauth-protected-resource` | `GET` | Gemini OAuth discovery probe |
-| `/.well-known/oauth-protected-resource/sse` | `GET` | Gemini OAuth SSE discovery probe |
+| `/.well-known/oauth-protected-resource` | `GET` | RFC 9728 OAuth discovery probe |
+| `/.well-known/oauth-authorization-server` | `GET` | RFC 8414 Authorization server metadata |
+| `/oauth/authorize` | `GET` | OAuth authorization code endpoint |
+| `/oauth/token` | `POST` | OAuth token exchange endpoint |
 
 ---
 
@@ -95,11 +99,7 @@ Connect your MCP client to the server using the SSE transport endpoint:
 
 2. **Run tests**:
    ```bash
-   pytest
-   ```
-   Or using Python's built-in test runner:
-   ```bash
-   python -m unittest discover -s tests
+   pytest -v
    ```
 
 3. **Run the server**:
