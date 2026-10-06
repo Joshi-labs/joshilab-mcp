@@ -70,6 +70,7 @@ docker run -d \
 | `OAUTH_CLIENT_ID` | `joshilab-client` | OAuth 2.0 client ID for Gemini |
 | `OAUTH_CLIENT_SECRET` | `joshilab-secret-2026` | OAuth 2.0 client secret for Gemini |
 | `SERVER_NAME` | `HostTerminalBridge` | MCP server identification name |
+| `USE_NSENTER` | `1` (if `nsenter` found) | `1` to execute via `nsenter`, `0` for direct shell execution |
 
 ---
 
