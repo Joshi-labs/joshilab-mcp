@@ -1,5 +1,4 @@
 import asyncio
-import os
 import subprocess
 import unittest
 import urllib.parse
@@ -7,7 +6,7 @@ from unittest.mock import patch
 from starlette.testclient import TestClient
 
 import server
-from server import app, can_use_nsenter, exec_command, mcp, OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET
+from server import app, exec_command, mcp, OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET
 
 
 class TestServerRoutes(unittest.TestCase):
@@ -132,42 +131,38 @@ class TestServerRoutes(unittest.TestCase):
 
 
 class TestExecCommandTool(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls._orig_nsenter_env = os.environ.get("USE_NSENTER")
-        os.environ["USE_NSENTER"] = "0"
-
-    @classmethod
-    def tearDownClass(cls):
-        if cls._orig_nsenter_env is not None:
-            os.environ["USE_NSENTER"] = cls._orig_nsenter_env
-        else:
-            os.environ.pop("USE_NSENTER", None)
-
     def test_empty_command(self):
         self.assertEqual(exec_command(""), "Error: Command cannot be empty.")
         self.assertEqual(exec_command("   "), "Error: Command cannot be empty.")
 
-    def test_successful_command(self):
-        if os.name == "nt":
-            result = exec_command("Write-Output 'Hello from MCP'")
-        else:
-            result = exec_command("echo 'Hello from MCP'")
-        self.assertIn("Hello from MCP", result)
+    @patch("subprocess.run")
+    def test_successful_command(self, mock_run):
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="Hello from host", stderr=""
+        )
+        result = exec_command("echo 'Hello from host'")
+        self.assertEqual(result, "Hello from host")
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args[0][0]
+        self.assertEqual(cmd[0], "nsenter")
+        self.assertIn("-t", cmd)
+        self.assertIn("1", cmd)
+        self.assertIn("/bin/bash", cmd)
+        self.assertIn("echo 'Hello from host'", cmd)
 
-    def test_failing_command(self):
-        if os.name == "nt":
-            result = exec_command("exit 42")
-        else:
-            result = exec_command("exit 42")
+    @patch("subprocess.run")
+    def test_failing_command(self, mock_run):
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=42, stdout="", stderr="command failed"
+        )
+        result = exec_command("exit 42")
         self.assertIn("Exit code 42", result)
+        self.assertIn("[STDERR]\ncommand failed", result)
 
-    def test_timeout_handling(self):
-        if os.name == "nt":
-            result = exec_command("Start-Sleep -Seconds 5", timeout=1)
-        else:
-            result = exec_command("sleep 5", timeout=1)
-        self.assertIn("timed out after 1 seconds", result)
+    @patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="nsenter", timeout=5))
+    def test_timeout_handling(self, mock_run):
+        result = exec_command("sleep 10", timeout=5)
+        self.assertIn("timed out after 5 seconds", result)
 
     def test_fastmcp_tool_registered(self):
         async def check_tools():
@@ -176,25 +171,6 @@ class TestExecCommandTool(unittest.TestCase):
             self.assertIn("exec_command", tool_names)
 
         asyncio.run(check_tools())
-
-    @patch("server.can_use_nsenter", return_value=True)
-    @patch("subprocess.run")
-    def test_exec_command_with_nsenter_mock(self, mock_run, mock_can_use):
-        mock_run.return_value = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="nsenter host output", stderr=""
-        )
-        result = exec_command("uname -a")
-        self.assertEqual(result, "nsenter host output")
-        mock_run.assert_called_once()
-        cmd = mock_run.call_args[0][0]
-        self.assertEqual(cmd[0], "nsenter")
-        self.assertIn("-t", cmd)
-        self.assertIn("1", cmd)
-        self.assertIn("uname -a", cmd)
-
-    def test_can_use_nsenter_when_disabled(self):
-        with patch.dict(os.environ, {"USE_NSENTER": "0"}):
-            self.assertFalse(can_use_nsenter())
 
 
 if __name__ == "__main__":
