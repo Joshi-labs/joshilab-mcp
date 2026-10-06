@@ -34,8 +34,6 @@ jobs:
           pip install -r requirements.txt pytest httpx
 
       - name: Run tests
-        env:
-          USE_NSENTER: '0'
         run: |
           pytest
 

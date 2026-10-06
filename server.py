@@ -1,7 +1,6 @@
 import contextlib
 import os
 import secrets
-import shutil
 import subprocess
 import urllib.parse
 from mcp.server.fastmcp import FastMCP
@@ -9,7 +8,7 @@ from starlette.applications import Starlette
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse, RedirectResponse, Response
-from starlette.routing import Mount, Route
+from starlette.routing import Route
 
 # Configuration via environment variables
 HOST = os.environ.get("HOST", "0.0.0.0")
@@ -17,45 +16,13 @@ PORT = int(os.environ.get("PORT", "8000"))
 SERVER_NAME = os.environ.get("SERVER_NAME", "HostTerminalBridge")
 PUBLIC_URL = os.environ.get("PUBLIC_URL", "https://host.vpjoshi.in").rstrip("/")
 
-# OAuth Credentials (defaults provided, can be overridden via env)
+# OAuth Credentials
 OAUTH_CLIENT_ID = os.environ.get("OAUTH_CLIENT_ID", "joshilab-client")
 OAUTH_CLIENT_SECRET = os.environ.get("OAUTH_CLIENT_SECRET", "joshilab-secret-2026")
-
-USE_NSENTER = os.environ.get(
-    "USE_NSENTER", "1" if shutil.which("nsenter") else "0"
-).lower() in ("1", "true", "yes")
 
 # In-memory stores for issued auth codes and tokens
 valid_tokens: set[str] = set()
 valid_codes: dict[str, str] = {}
-
-
-def can_use_nsenter() -> bool:
-    """Check if nsenter can be used to execute commands in the host namespace."""
-    env_val = os.environ.get("USE_NSENTER")
-    if env_val is not None:
-        if env_val.lower() not in ("1", "true", "yes"):
-            return False
-    elif not USE_NSENTER:
-        return False
-
-    if not shutil.which("nsenter"):
-        return False
-
-    if hasattr(os, "geteuid") and os.geteuid() != 0:
-        return False
-
-    if os.path.exists("/proc/1/ns"):
-        try:
-            for ns in ("mnt", "ipc", "pid"):
-                ns_path = f"/proc/1/ns/{ns}"
-                if os.path.exists(ns_path) and not os.access(ns_path, os.R_OK):
-                    return False
-        except OSError:
-            return False
-
-    return True
-
 
 # Initialize FastMCP
 mcp = FastMCP(SERVER_NAME, host=HOST, port=PORT)
@@ -63,28 +30,14 @@ mcp = FastMCP(SERVER_NAME, host=HOST, port=PORT)
 
 @mcp.tool()
 def exec_command(command: str, timeout: int = 120) -> str:
-    """Executes arbitrary commands directly on the host system via nsenter.
-
-    Args:
-        command: The shell command to execute on the host.
-        timeout: Maximum execution time in seconds (default: 120).
-    """
+    """Executes arbitrary commands directly on the host system via nsenter."""
     if not command or not command.strip():
         return "Error: Command cannot be empty."
 
-    if can_use_nsenter():
-        cmd = [
-            "nsenter", "-t", "1", "-m", "-u", "-i", "-n", "-p", "--",
-            "/bin/bash", "-c", command,
-        ]
-    else:
-        # Fallback for local development or non-containerized environments
-        if os.name == "nt":
-            cmd = ["powershell", "-NoProfile", "-Command", command]
-        else:
-            shell = shutil.which("bash") or shutil.which("sh") or "/bin/sh"
-            cmd = [shell, "-c", command]
-
+    cmd = [
+        "nsenter", "-t", "1", "-m", "-u", "-i", "-n", "-p", "--",
+        "/bin/bash", "-c", command,
+    ]
     try:
         result = subprocess.run(
             cmd,
@@ -92,13 +45,7 @@ def exec_command(command: str, timeout: int = 120) -> str:
             text=True,
             timeout=timeout,
         )
-        output_parts = []
-        if result.stdout:
-            output_parts.append(result.stdout)
-        if result.stderr:
-            output_parts.append(f"[STDERR]\n{result.stderr}")
-        output = "\n".join(output_parts).strip()
-
+        output = (result.stdout + ("\n[STDERR]\n" + result.stderr if result.stderr else "")).strip()
         if result.returncode != 0:
             exit_msg = f"(Exit code {result.returncode})"
             return f"{output}\n{exit_msg}".strip() if output else exit_msg
@@ -110,7 +57,7 @@ def exec_command(command: str, timeout: int = 120) -> str:
         return f"Execution failed: {str(e)}"
 
 
-# Build the underlying transports
+# FastMCP Streamable HTTP ASGI Dispatcher
 _ = mcp.streamable_http_app()
 
 
@@ -125,9 +72,6 @@ class StreamableDispatcher:
 
 
 streamable_dispatcher = StreamableDispatcher(mcp)
-
-sse_app = mcp.sse_app()
-messages_mount = next(r for r in sse_app.routes if getattr(r, "path", "") == "/messages")
 
 
 def get_base_url(request: Request) -> str:
@@ -151,7 +95,7 @@ async def health(request: Request) -> JSONResponse:
     return JSONResponse({"status": "healthy"})
 
 
-# 2. RFC 9728 OAuth Discovery Endpoints for Gemini & MCP clients
+# 2. RFC 9728 OAuth Discovery Endpoints for Gemini
 async def oauth_protected_resource(request: Request) -> JSONResponse:
     base = get_base_url(request)
     return JSONResponse({
@@ -188,9 +132,7 @@ async def oauth_authorize(request: Request) -> Response:
     client_id = request.query_params.get("client_id")
 
     if not redirect_uri:
-        return PlainTextResponse(
-            "Gemini MCP OAuth Authorization Endpoint. Ready.", status_code=200
-        )
+        return PlainTextResponse("Gemini MCP OAuth Authorization Endpoint. Ready.", status_code=200)
 
     code = secrets.token_urlsafe(32)
     valid_codes[code] = client_id or OAUTH_CLIENT_ID
@@ -221,7 +163,6 @@ async def oauth_token(request: Request) -> JSONResponse:
     auth_header = request.headers.get("authorization", "")
     if auth_header.startswith("Basic "):
         import base64
-
         try:
             decoded = base64.b64decode(auth_header[6:]).decode()
             if ":" in decoded:
@@ -229,17 +170,10 @@ async def oauth_token(request: Request) -> JSONResponse:
         except Exception:
             pass
 
-    # Verify credentials if supplied
     if client_id and client_id != OAUTH_CLIENT_ID:
-        return JSONResponse(
-            {"error": "invalid_client", "error_description": "Invalid client ID"},
-            status_code=401,
-        )
+        return JSONResponse({"error": "invalid_client", "error_description": "Invalid client ID"}, status_code=401)
     if client_secret and client_secret != OAUTH_CLIENT_SECRET:
-        return JSONResponse(
-            {"error": "invalid_client", "error_description": "Invalid client secret"},
-            status_code=401,
-        )
+        return JSONResponse({"error": "invalid_client", "error_description": "Invalid client secret"}, status_code=401)
 
     token = "mcp_" + secrets.token_urlsafe(32)
     valid_tokens.add(token)
@@ -263,7 +197,7 @@ async def lifespan(app_instance: Starlette):
 
 
 def print_startup_banner():
-    banner = f"""
+    print(f"""
 ================================================================================
   JOSHILAB-MCP SERVER INITIALIZED
 --------------------------------------------------------------------------------
@@ -274,8 +208,7 @@ def print_startup_banner():
     Client ID:     {OAUTH_CLIENT_ID}
     Client Secret: {OAUTH_CLIENT_SECRET}
 ================================================================================
-"""
-    print(banner, flush=True)
+""", flush=True)
 
 
 routes = [
@@ -289,10 +222,8 @@ routes = [
     Route("/.well-known/openid-configuration", endpoint=oauth_authorization_server, methods=["GET"]),
     Route("/oauth/authorize", endpoint=oauth_authorize, methods=["GET"]),
     Route("/oauth/token", endpoint=oauth_token, methods=["POST"]),
-    # Modern Streamable HTTP transport endpoints
     Route("/mcp", endpoint=streamable_dispatcher, methods=["GET", "POST", "DELETE"]),
     Route("/sse", endpoint=streamable_dispatcher, methods=["GET", "POST", "HEAD", "DELETE"]),
-    messages_mount,
 ]
 
 app = Starlette(routes=routes, lifespan=lifespan)
@@ -306,5 +237,4 @@ app.add_middleware(
 
 if __name__ == "__main__":
     import uvicorn
-
     uvicorn.run(app, host=HOST, port=PORT)
