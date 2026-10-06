@@ -95,7 +95,7 @@ async def health(request: Request) -> JSONResponse:
     return JSONResponse({"status": "healthy"})
 
 
-# 2. RFC 9728 OAuth Discovery Endpoints for Gemini
+# 2. RFC 9728 OAuth Discovery Endpoints for Claude, Gemini, and other MCP clients
 async def oauth_protected_resource(request: Request) -> JSONResponse:
     base = get_base_url(request)
     return JSONResponse({
@@ -132,7 +132,7 @@ async def oauth_authorize(request: Request) -> Response:
     client_id = request.query_params.get("client_id")
 
     if not redirect_uri:
-        return PlainTextResponse("Gemini MCP OAuth Authorization Endpoint. Ready.", status_code=200)
+        return PlainTextResponse("MCP OAuth Authorization Endpoint. Ready for Claude, Gemini, and other MCP clients.", status_code=200)
 
     code = secrets.token_urlsafe(32)
     valid_codes[code] = client_id or OAUTH_CLIENT_ID
@@ -204,7 +204,7 @@ def print_startup_banner():
   MCP Server URL:   {PUBLIC_URL}/mcp
   Alternative URL:  {PUBLIC_URL}/sse
 
-  Gemini OAuth Credentials:
+  OAuth Credentials (for Claude, Gemini, etc.):
     Client ID:     {OAUTH_CLIENT_ID}
     Client Secret: {OAUTH_CLIENT_SECRET}
 ================================================================================

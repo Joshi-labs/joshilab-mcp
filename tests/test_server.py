@@ -68,14 +68,14 @@ class TestServerRoutes(unittest.TestCase):
     def test_oauth_authorize_and_token_flow(self):
         # 1. Authorize redirect
         redirect_uri = "https://vertexaisearch.cloud.google.com/oauth-redirect"
-        auth_url = f"/oauth/authorize?response_type=code&client_id={OAUTH_CLIENT_ID}&redirect_uri={redirect_uri}&state=gemini_state"
+        auth_url = f"/oauth/authorize?response_type=code&client_id={OAUTH_CLIENT_ID}&redirect_uri={redirect_uri}&state=mcp_state"
         res = self.client.get(auth_url, follow_redirects=False)
         self.assertEqual(res.status_code, 302)
         location = res.headers.get("location")
         self.assertTrue(location.startswith(redirect_uri))
         parsed = urllib.parse.parse_qs(urllib.parse.urlparse(location).query)
         self.assertIn("code", parsed)
-        self.assertEqual(parsed.get("state"), ["gemini_state"])
+        self.assertEqual(parsed.get("state"), ["mcp_state"])
         code = parsed["code"][0]
 
         # 2. Token exchange with valid credentials
@@ -111,7 +111,7 @@ class TestServerRoutes(unittest.TestCase):
                         "params": {
                             "protocolVersion": "2024-11-05",
                             "capabilities": {},
-                            "clientInfo": {"name": "Gemini", "version": "1.0"},
+                            "clientInfo": {"name": "Claude-or-Gemini", "version": "1.0"},
                         },
                     },
                 )

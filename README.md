@@ -1,6 +1,6 @@
 # joshilab-mcp: Host Terminal Bridge
 
-A containerized Model Context Protocol (MCP) server providing host command execution via **Streamable HTTP** and **SSE**. Built with Python FastMCP and Starlette, designed for native integration with Google Gemini, Claude Desktop, and modern MCP clients.
+A containerized Model Context Protocol (MCP) server providing host command execution via **Streamable HTTP** and **SSE**. Built with Python FastMCP and Starlette, designed for native integration with **Claude Desktop**, **Google Gemini**, and modern MCP clients.
 
 ---
 
@@ -8,14 +8,33 @@ A containerized Model Context Protocol (MCP) server providing host command execu
 
 - **MCP Tools**: Exposes `exec_command` to run arbitrary commands directly on the host system using `nsenter`.
 - **Streamable HTTP & SSE**: Full support for both modern Streamable HTTP (`/mcp`, `/sse`) and legacy SSE.
-- **Gemini Connected Apps Ready**: Complete OAuth 2.0 implementation (`/oauth/authorize`, `/oauth/token`) and RFC 9728 discovery metadata (`/.well-known/oauth-protected-resource`).
+- **Universal Client Support**: Works out of the box with Claude Desktop, Google Gemini, Cursor, and any MCP client.
+- **OAuth 2.0 Ready**: Complete OAuth 2.0 implementation (`/oauth/authorize`, `/oauth/token`) and RFC 9728 discovery metadata (`/.well-known/oauth-protected-resource`).
 - **Health Checks**: `/health` and `/healthz` endpoints with Docker `HEALTHCHECK`.
 - **CORS Enabled**: Permissive CORS headers for browser-based MCP clients.
-- **Configurable**: Configurable via environment variables with auto-printed credentials banner in logs.
+- **Configurable**: Fully configurable via environment variables with auto-printed credentials banner in logs.
 
 ---
 
-## Gemini Custom Connected App Setup
+## Connecting to MCP Clients
+
+### 1. Claude Desktop
+
+Add the server to your `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "host-terminal": {
+      "url": "https://host.vpjoshi.in/mcp"
+    }
+  }
+}
+```
+
+*(Alternatively, use `"url": "https://host.vpjoshi.in/sse"`)*
+
+### 2. Google Gemini (Custom Connected Apps)
 
 In the Google Gemini interface (**Connect to an MCP server**):
 
@@ -67,10 +86,9 @@ docker run -d \
 | `HOST` | `0.0.0.0` | Bind IP address |
 | `PORT` | `8000` | Port for the HTTP/MCP server |
 | `PUBLIC_URL` | `https://host.vpjoshi.in` | Public URL advertised in discovery probes |
-| `OAUTH_CLIENT_ID` | `joshilab-client` | OAuth 2.0 client ID for Gemini |
-| `OAUTH_CLIENT_SECRET` | `joshilab-secret-2026` | OAuth 2.0 client secret for Gemini |
+| `OAUTH_CLIENT_ID` | `joshilab-client` | OAuth 2.0 client ID |
+| `OAUTH_CLIENT_SECRET` | `joshilab-secret-2026` | OAuth 2.0 client secret |
 | `SERVER_NAME` | `HostTerminalBridge` | MCP server identification name |
-| `USE_NSENTER` | `1` (if `nsenter` found) | `1` to execute via `nsenter`, `0` for direct shell execution |
 
 ---
 
@@ -78,7 +96,7 @@ docker run -d \
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/mcp` | `GET`, `POST`, `DELETE` | Modern Streamable HTTP MCP endpoint (Gemini default) |
+| `/mcp` | `GET`, `POST`, `DELETE` | Modern Streamable HTTP MCP endpoint (Claude & Gemini default) |
 | `/sse` | `GET`, `POST` | Dual Streamable HTTP / SSE endpoint |
 | `/` | `GET`, `POST` | Health & endpoint discovery probe |
 | `/health`, `/healthz` | `GET` | Health check endpoint |
